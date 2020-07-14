@@ -264,3 +264,74 @@ def soft_discrepancy(out1, out2):
 
 def view(input):
     return input.view(input.size(0), -1)
+
+def get_intra_loss(preds, type='l1'):
+    assert type in ['l1', 'soft_l1']
+    loss = 0
+    for pred in preds:
+        for i in range(len(pred)):
+            for j in range(i+1, len(pred)):
+                if type=='l1':
+                    loss += discrepancy(pred[i], pred[j])
+                elif type=='soft_l1':
+                    loss += soft_discrepancy(pred[i], pred[j])
+                else:
+                    raise NotImplementedError
+    return loss
+
+
+def get_mean(pred):
+    mean = 0
+    for p in pred:
+        mean += p
+    return mean / len(pred)
+
+def get_inter_loss(preds, type='l1'):
+    assert type in ['l1', 'soft_l1']
+    loss = 0
+    
+    means = [get_mean(pred) for pred in preds]
+    for i in range(len(means)):
+        for j in range(i+1, len(means)):
+            if type=='l1':
+                loss += discrepancy(means[i], means[j])
+            elif type == 'soft_l1':
+                loss += soft_discrepancy(means[i], means[j])
+            else:
+                raise NotImplementedError
+    return loss
+
+def get_ensemble_loss(preds, mode='average', type='kl', T=3.0):
+    '''
+        mode: average or batch or individual. The type of weights for ensemble label calculation.
+        type: loss type
+    '''
+    means = [get_mean(pred) for pred in preds]
+    
+    if mode == 'average':
+        ensemble = sum(means) / len(means)
+    else:
+        raise NotImplementedError
+
+    loss = 0
+    if type == 'kl':
+        for pred in preds:
+            for p in pred:
+                loss += F.kl_div(F.log_softmax(p / T, dim=1), F.softmax(ensemble.detach() / T, dim=1),
+                             reduction='mean') * (T * T) 
+
+    return loss, ensemble
+
+def separate_forward(models, images):
+    outputs = []
+    index = 0
+    for model in models:
+        model_outputs = []
+        for clf in model.clfs:
+            image = images[:,index,...]
+            output = clf(model.feature_extractor(image))
+            model_outputs.append(output)
+            index += 1
+        outputs.append(model_outputs)
+
+    return outputs

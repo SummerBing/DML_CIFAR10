@@ -159,18 +159,44 @@ class ResNet(nn.Module):
         return out
 
 
+# class ResNet_DML(nn.Module):
+#     def __init__(self, num_class, depth, num_clf=2):
+#         super(ResNet_DML, self).__init__()
+#         self.feature_extractor = ResNet_feature(depth=depth)
+#         self.clfs = [ResNet_classifier(num_class=num_class)] * num_clf
+#         # self.clf1 = ResNet_classifier(num_class=num_class)
+#         # self.clf2 = ResNet_classifier(num_class=num_class)
+
+#     def forward(self, x):
+#         feature = self.feature_extractor(x)
+#         outputs = [clf(feature) for clf in self.clfs]
+#         # out1 = self.clf1(feature)
+#         # out2 = self.clf2(feature)
+#         return outputs
+
 class ResNet_DML(nn.Module):
-    def __init__(self, num_class, depth):
+    def __init__(self, num_class, depth, num_clf=2):
         super(ResNet_DML, self).__init__()
+        assert num_clf <=4, 'do not support more than 4 classifiers yet'
         self.feature_extractor = ResNet_feature(depth=depth)
         self.clf1 = ResNet_classifier(num_class=num_class)
         self.clf2 = ResNet_classifier(num_class=num_class)
+        if num_clf >= 3:
+            self.clf3 = ResNet_classifier(num_class=num_class)
+        if num_clf >= 4:
+            self.clf4 = ResNet_classifier(num_class=num_class)
+
+        if num_clf == 2:
+            self.clfs = [self.clf1, self.clf2]
+        if num_clf == 3:
+            self.clfs = [self.clf1, self.clf2, self.clf3]
+        if num_clf == 4:
+            self.clfs = [self.clf1, self.clf2, self.clf3, self.clf4]
 
     def forward(self, x):
         feature = self.feature_extractor(x)
-        out1 = self.clf1(feature)
-        out2 = self.clf2(feature)
-        return out1, out2
+        outs = [clf(feature) for clf in self.clfs]
+        return outs
 
 
 class ResNet_DML_3C(nn.Module):
@@ -205,10 +231,10 @@ class ResNet_feature(nn.Module):
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal(m.weight, mode='fan_out')
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
             elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant(m.weight, 1)
-                nn.init.constant(m.bias, 0)
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def make_layer(self, block, num, in_channels, out_channels):
         layers = [block(in_channels, out_channels)]
@@ -237,10 +263,10 @@ class ResNet_classifier(nn.Module):
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal(m.weight, mode='fan_out')
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
             elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant(m.weight, 1)
-                nn.init.constant(m.bias, 0)
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         out = self.fc1(x)

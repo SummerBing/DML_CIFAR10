@@ -195,17 +195,29 @@ class VGG_classifier(nn.Module):
 
 
 class VGG_DML(nn.Module):
-    def __init__(self, num_class, depth):
+    def __init__(self, num_class, depth, num_clf=2):
         super(VGG_DML, self).__init__()
+        assert num_clf <=4, 'do not support more than 4 classifiers yet'
         self.feature_extractor = VGG_feature(depth=depth)
         self.clf1 = VGG_classifier(num_class=num_class)
         self.clf2 = VGG_classifier(num_class=num_class)
 
+        if num_clf >= 3:
+            self.clf3 = VGG_classifier(num_class=num_class)
+        if num_clf >= 4:
+            self.clf4 = VGG_classifier(num_class=num_class)
+
+        if num_clf == 2:
+            self.clfs = [self.clf1, self.clf2]
+        if num_clf == 3:
+            self.clfs = [self.clf1, self.clf2, self.clf3]
+        if num_clf == 4:
+            self.clfs = [self.clf1, self.clf2, self.clf3, self.clf4]
+
     def forward(self, x):
         feature = self.feature_extractor(x)
-        out1 = self.clf1(feature)
-        out2 = self.clf2(feature)
-        return out1, out2
+        outs = [clf(feature) for clf in self.clfs]
+        return outs
 
 
 def vgg16(pretrained=False, path=None, **kwargs):

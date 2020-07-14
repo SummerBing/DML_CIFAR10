@@ -150,18 +150,42 @@ class WideResNet_classifier(nn.Module):
         return self.fc(out)
 
 
+# class WideResNet_DML(nn.Module):
+#     def __init__(self, num_class, depth, widen_factor):
+#         super(WideResNet_DML, self).__init__()
+#         self.feature_extractor = WideResNet_feature(depth=depth, widen_factor=widen_factor)
+#         self.clf1 = WideResNet_classifier(depth=depth, num_classes=num_class, widen_factor=widen_factor)
+#         self.clf2 = WideResNet_classifier(depth=depth, num_classes=num_class, widen_factor=widen_factor)
+
+#     def forward(self, x):
+#         feature = self.feature_extractor(x)
+#         out1 = self.clf1(feature)
+#         out2 = self.clf2(feature)
+#         return out1, out2
+
 class WideResNet_DML(nn.Module):
-    def __init__(self, num_class, depth, widen_factor):
+    def __init__(self, num_class, depth, widen_factor, num_clf=2):
         super(WideResNet_DML, self).__init__()
+        assert num_clf <=4, 'do not support more than 4 classifiers yet'
         self.feature_extractor = WideResNet_feature(depth=depth, widen_factor=widen_factor)
         self.clf1 = WideResNet_classifier(depth=depth, num_classes=num_class, widen_factor=widen_factor)
         self.clf2 = WideResNet_classifier(depth=depth, num_classes=num_class, widen_factor=widen_factor)
+        if num_clf >= 3:
+            self.clf3 = WideResNet_classifier(depth=depth, num_classes=num_class, widen_factor=widen_factor)
+        if num_clf >= 4:
+            self.clf4 = WideResNet_classifier(depth=depth, num_classes=num_class, widen_factor=widen_factor)
+
+        if num_clf == 2:
+            self.clfs = [self.clf1, self.clf2]
+        if num_clf == 3:
+            self.clfs = [self.clf1, self.clf2, self.clf3]
+        if num_clf == 4:
+            self.clfs = [self.clf1, self.clf2, self.clf3, self.clf4]
 
     def forward(self, x):
         feature = self.feature_extractor(x)
-        out1 = self.clf1(feature)
-        out2 = self.clf2(feature)
-        return out1, out2
+        outs = [clf(feature) for clf in self.clfs]
+        return outs
 
 
 class WideResNet_DML_12(nn.Module):
