@@ -265,15 +265,16 @@ def soft_discrepancy(out1, out2):
 def view(input):
     return input.view(input.size(0), -1)
 
+
 def get_intra_loss(preds, type='l1'):
     assert type in ['l1', 'soft_l1']
     loss = 0
     for pred in preds:
         for i in range(len(pred)):
             for j in range(i+1, len(pred)):
-                if type=='l1':
+                if type == 'l1':
                     loss += discrepancy(pred[i], pred[j])
-                elif type=='soft_l1':
+                elif type == 'soft_l1':
                     loss += soft_discrepancy(pred[i], pred[j])
                 else:
                     raise NotImplementedError
@@ -285,6 +286,7 @@ def get_mean(pred):
     for p in pred:
         mean += p
     return mean / len(pred)
+
 
 def get_inter_loss(preds, type='l1'):
     assert type in ['l1', 'soft_l1']
@@ -300,6 +302,7 @@ def get_inter_loss(preds, type='l1'):
             else:
                 raise NotImplementedError
     return loss
+
 
 def get_ensemble_loss(preds, mode='average', type='kl', T=3.0):
     '''
@@ -321,6 +324,7 @@ def get_ensemble_loss(preds, mode='average', type='kl', T=3.0):
                              reduction='mean') * (T * T) 
 
     return loss, ensemble
+
 
 def separate_forward(models, images):
     outputs = []
