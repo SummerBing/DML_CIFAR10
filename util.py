@@ -254,31 +254,46 @@ def get_pseudo_loss_new(preds1, preds2, consistency_meters, smooth=0.1, weight_c
     return pseudo, loss
 
 
-def discrepancy(out1, out2):
-    return torch.mean(torch.abs(F.softmax(out1, dim=1) - F.softmax(out2, dim=1)))
+def discrepancy(out1, out2, return_mean=True):
+    if return_mean:
+        return torch.mean(torch.abs(F.softmax(out1, dim=1) - F.softmax(out2, dim=1)))
+    else:
+        return torch.mean(torch.abs(F.softmax(out1, dim=1) - F.softmax(out2, dim=1)), dim=1)
 
 
-def soft_discrepancy(out1, out2):
-    return torch.mean(torch.abs(F.softmax(out1 / 3.0, dim=1) - F.softmax(out2 / 3.0, dim=1)))
+def soft_discrepancy(out1, out2, return_mean=True):
+    if return_mean:
+        return torch.mean(torch.abs(F.softmax(out1 / 3.0, dim=1) - F.softmax(out2 / 3.0, dim=1)))
+    else:
+        return torch.mean(torch.abs(F.softmax(out1 / 3.0, dim=1) - F.softmax(out2 / 3.0, dim=1)), dim=1)
 
 
 def view(input):
     return input.view(input.size(0), -1)
 
 
-def get_intra_loss(preds, type='l1'):
+def get_intra_loss(preds, type='l1', return_total_loss=True):
     assert type in ['l1', 'soft_l1']
-    loss = 0
+    total_loss = 0
+    sub_losses = []
     for pred in preds:
+        sub_loss = 0
         for i in range(len(pred)):
             for j in range(i+1, len(pred)):
                 if type == 'l1':
-                    loss += discrepancy(pred[i], pred[j])
+                    loss = discrepancy(pred[i], pred[j], return_mean=False)
                 elif type == 'soft_l1':
-                    loss += soft_discrepancy(pred[i], pred[j])
+                    loss = soft_discrepancy(pred[i], pred[j], return_mean=False)
                 else:
                     raise NotImplementedError
-    return loss
+                total_loss += torch.mean(loss)
+                sub_loss += loss
+        sub_losses.append(sub_loss)
+    
+    if return_total_loss:
+        return total_loss
+    else:
+        return sub_losses
 
 
 def get_mean(pred):
@@ -309,10 +324,28 @@ def get_ensemble_loss(preds, mode='average', type='kl', T=3.0):
         mode: average or batch or individual. The type of weights for ensemble label calculation.
         type: loss type
     '''
+    assert mode in ['average', 'batch_weighted', 'sample_weighted']
+
     means = [get_mean(pred) for pred in preds]
     
     if mode == 'average':
         ensemble = sum(means) / len(means)
+    elif mode == 'batch_weighted':
+        sub_losses = get_intra_loss(preds, type='soft_l1', return_total_loss=False)
+        discrepancies = [torch.mean(sub_loss) for sub_loss in sub_losses]
+        weights = [min(discrepancies)/d for d in discrepancies]
+        weights = [w/sum(weights) for w in weights]
+        ensemble = 0
+        for mean, weight in zip(means, weights):
+            ensemble += weight * mean
+    elif mode == 'sample_weighted':
+        sub_losses = get_intra_loss(preds, type='soft_l1', return_total_loss=False) # (N)
+        weights = 1.0 / torch.stack(sub_losses, dim=0) # (num_model, N)
+        weights_sum = torch.sum(weights, dim=0) 
+        weights = weights / weights_sum
+        ensemble = 0
+        for mean, weight in zip(means, weights):
+            ensemble += torch.mul(weight.unsqueeze(1), mean)
     else:
         raise NotImplementedError
 
@@ -325,17 +358,25 @@ def get_ensemble_loss(preds, mode='average', type='kl', T=3.0):
 
     return loss, ensemble
 
+# a slower but simpler implementation
+# def separate_forward(models, images):
+#     outputs = []
+#     index = 0
+#     for model in models:
+#         model_outputs = []
+#         for clf in model.clfs:
+#             image = images[:,index,...]
+#             output = clf(model.feature_extractor(image))
+#             model_outputs.append(output)
+#             index += 1
+#         outputs.append(model_outputs)
+#     return outputs
 
-def separate_forward(models, images):
-    outputs = []
-    index = 0
-    for model in models:
-        model_outputs = []
-        for clf in model.clfs:
-            image = images[:,index,...]
-            output = clf(model.feature_extractor(image))
-            model_outputs.append(output)
-            index += 1
-        outputs.append(model_outputs)
-
-    return outputs
+# a faster implementation
+def separate_forward(models, images, args):
+    # print(images.shape)
+    images = images.permute(1,0,2,3,4).contiguous()
+    index_list = [x for x in range(images.shape[0])][::args.num_clf]
+    image_sets = [images[index:index+args.num_clf] for index in index_list]
+    preds = [model(image, separate=True) for model, image in zip(models, image_sets)]
+    return preds

@@ -21,12 +21,14 @@ parser = argparse.ArgumentParser(description='DML')
 
 # training setup
 parser.add_argument('--epochs', type=int, default=300, help='number of total epochs to run')
+# parser.add_argument('--schedule', type=int, nargs='+', default=[150, 225],
+                        # help='Decrease learning rate at these epochs.')
 parser.add_argument('--schedule', type=int, nargs='+', default=[150, 225],
                         help='Decrease learning rate at these epochs.')
 parser.add_argument('--batch_size', type=int, default=128, help='The size of batch')
 parser.add_argument('--lr', type=float, default=0.1, help='initial learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
-parser.add_argument('--weight_decay', type=float, default=5e-4, help='weight decay')
+parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay')
 parser.add_argument('--cuda', type=int, default=1)
 
 # model
@@ -41,7 +43,7 @@ parser.add_argument('--num_clf', type=int, default=2, help='number of classifier
 parser.add_argument('--data_name', type=str, default='cifar100')
 parser.add_argument('--num_class', type=int, default=100)
 parser.add_argument('--dataset_path', type=str, default='./data/')
-parser.add_argument('--separate_augmentation', action='store_true', 
+parser.add_argument('--diffaug', action='store_true', 
                     help='if ture, use differernt augmentation for different models and classifiers')
 
 # inter intra ensemble
@@ -49,20 +51,24 @@ parser.add_argument('--use_intra', dest='use_intra', action='store_true')
 parser.add_argument('--no_intra', dest='use_intra', action='store_false')
 parser.set_defaults(use_intra=True)
 parser.add_argument('--intra_step', type=int, default=1)
-parser.add_argument('--intra_loss_type', type=str, default='l1')
+parser.add_argument('--intra_ratio', type=float, default=10)
+parser.add_argument('--intra_loss_type', type=str, default='soft_l1', choices=['l1', 'soft_l1'])
 
 parser.add_argument('--use_inter', dest='use_inter', action='store_true')
 parser.add_argument('--no_inter', dest='use_inter', action='store_false')
 parser.set_defaults(use_inter=True)
 parser.add_argument('--inter_step', type=int, default=1)
-parser.add_argument('--inter_loss_type', type=str, default='l1')
+parser.add_argument('--inter_ratio', type=float, default=10)
+parser.add_argument('--inter_loss_type', type=str, default='soft_l1', choices=['l1', 'soft_l1'])
 
 parser.add_argument('--use_ensemble', dest='use_ensemble', action='store_true')
 parser.add_argument('--no_ensemble', dest='use_ensemble', action='store_false')
 parser.set_defaults(use_ensemble=True)
 parser.add_argument('--ensemble_step', type=int, default=1)
 parser.add_argument('--ensemble_type', type=str, default='kl')
-parser.add_argument('--ensemble_mode', type=str, default='average')
+parser.add_argument('--ensemble_ratio', type=float, default=10)
+parser.add_argument('--ensemble_mode', type=str, default='average',\
+         choices=['average', 'batch_weighted', 'sample_weighted'])
 parser.add_argument('--ensemble_temp', type=float, default=3.0)
 
 
@@ -70,10 +76,10 @@ def main():
     global args
     args = parser.parse_args()
     print('args', args)
-    if not args.separate_augmentation:
+    if not args.diffaug:
         args.num_augmentation = 1
     else:
-        args.num_augmentation = args.num_model * args.num_class
+        args.num_augmentation = args.num_model * args.num_clf
     if args.cuda:
         cudnn.benchmark = True
 
@@ -87,7 +93,7 @@ def main():
     schedulers = [MultiStepLR(optimizer, milestones=args.schedule, gamma=0.1) for optimizer in opt_list]
 
     train_loader, test_loader = load_setting_aug.load_dataset(args)
-    max_prec = [0.0, 0.0, 0.0, 0.0, 0.0]
+    max_prec = [0.0 for _ in range(args.num_model*args.num_clf + 1)]
 
     for epoch in range(1, args.epochs + 1):
         epoch_start_time = time.time()
@@ -102,8 +108,8 @@ def main():
         for id in range(len(pred_list)):
             if max_prec[id] < pred_list[id]:
                 max_prec[id] = pred_list[id]
-        current_max = 'Current-Max:[{:.2f}, {:.2f}, {:.2f}, {:.2f}, {:.2f}]'.format(
-             max_prec[0], max_prec[1], max_prec[2], max_prec[3], max_prec[4])
+        max_str = 'Current-Max:['+ '{:.2f},'*args.num_model*args.num_clf +'{:.2f}]'
+        current_max = max_str.format(*max_prec)
         print(current_max)
         # if epoch == args.epochs:
         #     with open(save_max_accu, 'a') as f:
@@ -127,10 +133,10 @@ def train(train_loader, models, optimizers, epoch, args):
             target = target.cuda()
 
             # basic update with labels
-            if not args.separate_augmentation:
+            if not args.diffaug:
                 preds = [model(img) for model in models] # list of list
             else:
-                preds = separate_forward(models, img)
+                preds = separate_forward(models, img, args)
 
             cls_loss = 0
             for pred in preds:
@@ -145,17 +151,19 @@ def train(train_loader, models, optimizers, epoch, args):
             # intra inter
             if args.use_intra or args.use_inter:
                 for _ in range(args.intra_step):
-                    if not args.separate_augmentation:
+                    if not args.diffaug:
                         preds = [model(img) for model in models] # list of list
                     else:
-                        preds = separate_forward(models, img)
+                        preds = separate_forward(models, img, args)
 
                     intra_inter_loss = 0
                     if args.use_intra:
                         intra_loss = get_intra_loss(preds, type=args.intra_loss_type)
+                        intra_loss *= args.intra_ratio
                         intra_inter_loss += intra_loss
                     if args.use_inter:
                         inter_loss = get_inter_loss(preds, type=args.inter_loss_type)
+                        inter_loss *= args.inter_ratio
                         intra_inter_loss += inter_loss
                     opt_list = [optimizer['feature'] for optimizer in optimizers]
                     reset_grad(opt_list)
@@ -165,12 +173,14 @@ def train(train_loader, models, optimizers, epoch, args):
             # ensemble
             if args.use_ensemble:
                 for _ in range(args.ensemble_step):
-                    if not args.separate_augmentation:
+                    if not args.diffaug:
                         preds = [model(img) for model in models] # list of list
                     else:
-                        preds = separate_forward(models, img)
+                        preds = separate_forward(models, img, args)
 
                     ensemble_loss, ensemble_pred = get_ensemble_loss(preds, mode=args.ensemble_mode, type=args.ensemble_type, T=args.ensemble_temp)
+                    ensemble_loss *= args.ensemble_ratio
+
                     opt_list = [optimizer['feature'] for optimizer in optimizers] + [optimizer['clf'] for optimizer in optimizers]
                     reset_grad(opt_list)
                     ensemble_loss.backward()
@@ -192,10 +202,11 @@ def train(train_loader, models, optimizers, epoch, args):
                 ensemble_loss_meter.update(ensemble_loss.item(), preds[0][0].size(0))
 
             tbar.update()
-
-    result = '\nTraining: Epoch:{},cls-loss:({:.3f}),intra-loss:({:.3f}),inter-loss:({:.3f}),pseudo-loss:({:.3f}),accuracy:({:.4f},{:.4f},{:.4f},{:.4f},{:.4f})'.format(
+    result_str = '\nTraining: Epoch:{},cls-loss:({:.3f}),intra-loss:({:.3f}),inter-loss:({:.3f}),pseudo-loss:({:.3f}),'\
+                +'accuracy:('+'{:.4f} '*(num_clf*num_model)+ '{:.4f})'
+    result = result_str.format(
             epoch, cls_loss_meter.avg, intra_loss_meter.avg, inter_loss_meter.avg, ensemble_loss_meter.avg,
-            accuracy_meters[0].avg, accuracy_meters[1].avg, accuracy_meters[2].avg, accuracy_meters[3].avg, accuracy_meters[4].avg )
+             *[meter.avg for meter in accuracy_meters])
     print(result)
 
 def test(test_loader, models, epoch):
@@ -218,11 +229,10 @@ def test(test_loader, models, epoch):
             for acc, accuracy_meter in zip(accu, accuracy_meters):
                 accuracy_meter.update(acc, preds[0][0].size(0))
 
-    result = 'Testing: Epoch:{}, accuracy:({:.4f},{:.4f},{:.4f},{:.4f},{:.4f})'. \
-        format(epoch, accuracy_meters[0].avg, accuracy_meters[1].avg, 
-        accuracy_meters[2].avg, accuracy_meters[3].avg, accuracy_meters[4].avg)
+    result_str = 'Testing: Epoch:{},' + 'accuracy:('+'{:.4f} '*(num_clf*num_model)+ '{:.4f})'
+    result = result_str.format(epoch, *[meter.avg for meter in accuracy_meters])
     print(result)
-    return [accuracy_meters[0].avg, accuracy_meters[1].avg, accuracy_meters[2].avg, accuracy_meters[3].avg, accuracy_meters[4].avg]
+    return [meter.avg for meter in accuracy_meters]
 
 
 def reset_grad(optimizers):

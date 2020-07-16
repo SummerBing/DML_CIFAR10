@@ -299,7 +299,14 @@ class PyramidNet_DML(nn.Module):
             self.clfs = [self.clf1, self.clf2, self.clf3]
         if num_clf == 4:
             self.clfs = [self.clf1, self.clf2, self.clf3, self.clf4]
-    def forward(self, x):
-        feature = self.feature_extractor(x)
-        outs = [clf(feature) for clf in self.clfs]
+    
+    def forward(self, x, separate=False):
+        if not separate:
+            feature = self.feature_extractor(x)
+            outs = [clf(feature) for clf in self.clfs]
+        else:
+            feature = self.feature_extractor(x.view(x.shape[0]*x.shape[1], x.shape[2], x.shape[3], x.shape[4]))
+            # print(feature.shape)
+            features = feature.view(x.shape[0], x.shape[1], feature.shape[1])
+            outs = [clf(feature) for clf, feature in zip(self.clfs, features)]
         return outs

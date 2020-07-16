@@ -31,7 +31,7 @@ def define_net_and_opt_new(args):
         raise ValueError('Unknown model type')
 
     def get_optimizers(model):
-        opt_feature = torch.optim.SGD(model.feature_extractor.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        opt_feature = torch.optim.SGD(model.feature_extractor.parameters(), lr=args.lr / 2, momentum=args.momentum, weight_decay=args.weight_decay)
 
         clf_param = []
         for clf in model.clfs:
