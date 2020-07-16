@@ -6,7 +6,7 @@ Args:
 ```
 --num_model: number of models to use
 --num_clf: number of classifiers in each model
---separate_augmentation: if ON, use different agumentation for each classifier
+--diffaug: if ON, use different agumentation for each classifier
 ```
 
 Full Args:
